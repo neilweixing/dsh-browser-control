@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Browser control",
+    "description": "Drive the built-in Harness sidebar browser: an accessibility-tree snapshot as locator ground truth, one state-changing action per observation, trusted input, and real screenshots."
+  }
+}

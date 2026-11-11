@@ -1,0 +1,8 @@
+# dsh-browser-control bundle patch.
+#
+# One insert mounts the Host half, which registers the `browser_*` model tools,
+# the browser skill, and the `/dsh-browser-control` command broker. The browser
+# half is declared by package.json's `dsh.client` and binds to this same row.
+- insert:
+    - id: dsh-browser-control
+      name: dsh-browser-control
