@@ -1341,7 +1341,14 @@ window.__ModuleLoader__.load({
       }
       const before = new Set(browserTabsOf(sidebarRight, command.sessionId).map((tab) => tab.tabId))
       try {
-        sidebarRight.openTab('browser', { params: { url } })
+        // `openTab` targets whatever Session is on screen, not the Session that
+        // issued the call, so a Browser tab would land in the wrong Session
+        // whenever the user is looking elsewhere. `openTabIn` names the owner.
+        if (typeof sidebarRight.openTabIn === 'function') {
+          sidebarRight.openTabIn(command.sessionId, 'browser', { params: { url } })
+        } else {
+          sidebarRight.openTab('browser', { params: { url } })
+        }
       } catch (error) {
         throw new Error(
           `无法打开内置浏览器面板：${error instanceof Error ? error.message : String(error)}（请先让该会话显示在 Harness 主界面）`,
@@ -1690,9 +1697,22 @@ window.__ModuleLoader__.load({
         for (const tab of ctx.sidebarRight.openTabs.getSnapshot()) {
           if (tab.kind === 'browser') sessions.add(tab.sessionId)
         }
+        // A Session owns a Browser tab only after `browser_open` created one, so
+        // this list is exactly "Sessions this page can already serve". The
+        // first call of a Session is unowned by construction and is granted
+        // through `canCreate` below instead of a fabricated Session list.
         const mounted = ctx.sidebarRight.mounted.getSnapshot()
         if (typeof mounted === 'string') sessions.add(mounted)
         return [...sessions]
+      }
+
+      /**
+       * Whether this page may take a command for a Session that owns no Browser
+       * tab yet: only `browser_open` needs that, and only one page may claim it.
+       */
+      const canCreate = () => {
+        const mounted = ctx.sidebarRight.mounted.getSnapshot()
+        return typeof mounted === 'string'
       }
 
       const execute = async (command, lifetime) => {
@@ -1725,7 +1745,7 @@ window.__ModuleLoader__.load({
             const reply = await ctx.connection.rpc.call(
               CHANNEL,
               'poll',
-              { clientId: CLIENT_ID, sessions: claim() },
+              { clientId: CLIENT_ID, sessions: claim(), canCreate: canCreate() },
               signal,
             )
             if (signal.aborted) return

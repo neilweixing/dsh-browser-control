@@ -72,16 +72,39 @@ function createBroker() {
     return clients.size
   }
 
-  /** Read the Session list one poll serves. */
-  function servedSessions(value) {
-    const list = Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item !== '') : []
-    return new Set(list)
+  /** Read the Session list one poll serves, plus the page's own tool-creation eligibility. */
+  function readPollClaim(value) {
+    const input = typeof value === 'object' && value !== null ? value : {}
+    const list = Array.isArray(input.sessions)
+      ? input.sessions.filter((item) => typeof item === 'string' && item !== '')
+      : []
+    return { sessions: new Set(list), canCreate: input.canCreate === true, clientId: input.clientId }
+  }
+
+  /**
+   * Whether one poller may take one command.
+   *
+   * Ownership is decided first: a command belongs to the Session that issued it.
+   * A Session that has not opened a Browser tab yet reports nothing, though, so
+   * `browser_open` — the call that creates that first tab — would never be
+   * delivered. Creating a tab needs no existing tab, so a poller that declares
+   * it can create takes such a command as long as it is the only page asking:
+   * with two windows open, the width of the claim is what keeps a Session's
+   * command from landing in another window by accident.
+   * @param waiter - one held poll.
+   * @param entry - queued command.
+   * @returns whether this poller may take it.
+   */
+  function mayTake(waiter, entry) {
+    if (waiter.sessions.has(entry.sessionId)) return true
+    if (entry.createsTab !== true) return false
+    return waiter.canCreate === true
   }
 
   /** Hand one queued command to a poller that serves the command's Session, if one is waiting. */
   function deliver(entry) {
     for (const [clientId, waiter] of waiters) {
-      if (!waiter.sessions.has(entry.sessionId)) continue
+      if (!mayTake(waiter, entry)) continue
       const slot = pending.get(entry.callId)
       if (slot !== undefined) slot.clientId = clientId
       waiters.delete(clientId)
@@ -96,20 +119,20 @@ function createBroker() {
   }
 
   /** Take the first queued command this poller may serve, or nothing. */
-  function takeQueued(sessions) {
-    const index = queue.findIndex((entry) => sessions.has(entry.sessionId))
+  function takeQueued(waiter) {
+    const index = queue.findIndex((entry) => mayTake(waiter, entry))
     if (index < 0) return undefined
     return queue.splice(index, 1)[0]
   }
 
   /**
    * Hold one poll open until a command arrives, the hold expires, or the caller leaves.
-   * @param clientId - polling page identity.
-   * @param sessions - Sessions this poller serves.
+   * @param claim - the sessions this poller serves and whether it may create tabs.
    * @param signal - request cancellation.
    * @returns the RPC outcome carrying at most one command.
    */
-  function holdPoll(clientId, sessions, signal) {
+  function holdPoll(claim, signal) {
+    const clientId = claim.clientId
     return new Promise((resolve) => {
       const previous = waiters.get(clientId)
       if (previous !== undefined) previous.finish({ command: null })
@@ -123,14 +146,14 @@ function createBroker() {
         if (waiters.get(clientId) === waiter) waiters.delete(clientId)
         resolve(ok(body))
       }
-      const waiter = { sessions, finish }
+      const waiter = { sessions: claim.sessions, canCreate: claim.canCreate, finish }
       const onAbort = () => finish({ command: null })
       const timer = setTimeout(() => finish({ command: null }), POLL_HOLD_MS)
 
       waiters.set(clientId, waiter)
       signal.addEventListener('abort', onAbort, { once: true })
 
-      const queued = takeQueued(sessions)
+      const queued = takeQueued(waiter)
       if (queued !== undefined) {
         const slot = pending.get(queued.callId)
         if (slot !== undefined) slot.clientId = clientId
@@ -146,7 +169,7 @@ function createBroker() {
 
     if (endpoint === 'poll') {
       touch(clientId)
-      return await holdPoll(clientId, servedSessions(input.sessions), signal)
+      return await holdPoll(readPollClaim(input), signal)
     }
 
     if (endpoint === 'start') {
@@ -214,7 +237,14 @@ function createBroker() {
         return
       }
       signal?.addEventListener('abort', onAbort, { once: true })
-      enqueue({ callId, sessionId, command: { ...command, callId, expiresAt } })
+      enqueue({
+        callId,
+        sessionId,
+        // Only opening a page can act on a Session that owns no Browser tab
+        // yet; every other command needs the tab that call already created.
+        createsTab: command.op === 'open',
+        command: { ...command, callId, expiresAt },
+      })
     })
   }
 
