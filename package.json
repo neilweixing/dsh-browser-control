@@ -40,6 +40,9 @@
     }
   },
   "scripts": {
-    "test": "node test/agent.smoke.mjs"
+    "test": "node test/agent.smoke.mjs && node --test test/broker.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
   }
 }

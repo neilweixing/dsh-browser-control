@@ -1,9 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-  <title>Browser control</title>
-  <rect x="2.5" y="3.5" width="19" height="17" rx="2.5"/>
-  <path d="M2.5 8.5h19"/>
-  <circle cx="5.9" cy="6" r="0.55" fill="currentColor" stroke="none"/>
-  <circle cx="8" cy="6" r="0.55" fill="currentColor" stroke="none"/>
-  <path d="M9.8 12.3l2.4 1.7-2.4 1.7z" fill="currentColor" stroke="none"/>
-  <path d="M13.8 15.6h3.4"/>
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="5.5" y="7.5" width="25" height="21" rx="2.6" fill="url(#browser-frame)" fill-opacity="0.85" />
+  <path d="M5.5 13.4H30.5" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="1.2" />
+  <circle cx="8.5" cy="10.5" r="0.85" fill="#FFFFFF" fill-opacity="0.9" />
+  <circle cx="11.2" cy="10.5" r="0.85" fill="#FFFFFF" fill-opacity="0.9" />
+  <rect x="8.8" y="16.6" width="8.4" height="2" rx="1" fill="#FFFFFF" fill-opacity="0.7" />
+  <rect x="8.8" y="20.8" width="5.6" height="2" rx="1" fill="#FFFFFF" fill-opacity="0.42" />
+  <g transform="translate(17.4 15.9) scale(0.72)">
+    <path d="M0 0L0 14L3.9 10.2L6.5 16L9.5 14.7L7 9.3L12 9.3L0 0Z" fill="url(#browser-pointer)" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round" />
+  </g>
+  <defs>
+    <linearGradient id="browser-frame" x1="18" y1="7.5" x2="18" y2="28.5" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7CB7FF" />
+      <stop offset="1" stop-color="#145AF3" />
+    </linearGradient>
+    <linearGradient id="browser-pointer" x1="20" y1="16" x2="24" y2="27" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6AECB6" />
+      <stop offset="1" stop-color="#37A6B1" />
+    </linearGradient>
+  </defs>
 </svg>

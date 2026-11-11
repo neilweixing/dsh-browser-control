@@ -100,8 +100,9 @@ plugin_manager install_bundle /绝对路径/dsh-browser-control
 ## 开发
 
 ```bash
-# 页内代理冒烟测试，需要 jsdom
-node test/agent.smoke.mjs
+# 安装开发依赖并运行页内代理、Host/Client 回归测试
+npm install
+npm test
 ```
 
 改完 `index.js` / `client.js` 后：插件管理器里移除再安装，然后刷新 Harness 页面。

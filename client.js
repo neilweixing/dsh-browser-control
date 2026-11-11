@@ -53,7 +53,7 @@ window.__ModuleLoader__.load({
     const GUEST_BUDGET_MS = 25000
 
     /** Version marker of the in-page agent; a bump reinstalls it after a hot update. */
-    const AGENT_VERSION = 'dshbc/8'
+    const AGENT_VERSION = 'dshbc/9'
 
     /** Sleep for a bounded delay. */
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -389,22 +389,21 @@ window.__ModuleLoader__.load({
   }
 
   // ---- refs ---------------------------------------------------------------
+  var refPrefix = 'e' + Array.from(crypto.getRandomValues(new Uint32Array(4)), function (n) { return n.toString(16); }).join('-') + '-';
+  function invalidateRefs() {
+    M.refs.clear();
+    M.refByElement = new WeakMap();
+  }
+  var mutations = new MutationObserver(invalidateRefs);
+  mutations.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
   function refFor(el) {
+    if (mutations.takeRecords().length > 0) invalidateRefs();
     var existing = M.refByElement.get(el);
-    if (existing !== undefined) {
-      M.refs.set(existing, el);
-      return existing;
-    }
-    var ref = 'e' + String(++M.refSeq);
+    if (existing !== undefined) return existing;
+    if (M.refs.size >= 6000) invalidateRefs();
+    var ref = refPrefix + String(++M.refSeq);
     M.refByElement.set(el, ref);
     M.refs.set(ref, el);
-    if (M.refs.size > 6000) {
-      M.refs = new Map();
-      M.refByElement = new WeakMap();
-      M.refSeq = 0;
-      M.refByElement.set(el, ref);
-      M.refs.set(ref, el);
-    }
     return ref;
   }
 
@@ -618,6 +617,7 @@ window.__ModuleLoader__.load({
     var target = normalizeTarget(rawTarget);
     if (target === null) return { ok: false, reason: 'no-target' };
     if (target.ref !== undefined) {
+      if (mutations.takeRecords().length > 0) invalidateRefs();
       var el = M.refs.get(String(target.ref));
       if (el === undefined) return { ok: false, reason: 'stale-ref', locator: 'ref=' + String(target.ref) };
       if (!el.isConnected) return { ok: false, reason: 'detached', locator: 'ref=' + String(target.ref) };
@@ -910,14 +910,13 @@ window.__ModuleLoader__.load({
       var scrollDelta = typeof request.delta === 'number' ? request.delta : 600;
       var scrollCenter = centerOf(el);
       if (scrollCenter === null) return { ok: false, reason: 'not-rendered', node: chosen.node };
-      el.scrollBy(0, scrollDelta);
       return {
         ok: true,
         node: chosen.node,
         count: chosen.count,
         index: chosen.index,
         locator: chosen.locator,
-        outcome: 'scrolled ' + chosen.node.role + ' by ' + String(scrollDelta) + 'px: scrollTop ' + String(Math.round(el.scrollTop)) + ' of ' + String(el.scrollHeight) + 'px',
+        outcome: 'requested scroll of ' + chosen.node.role + ' by ' + String(scrollDelta) + 'px',
         wheel: { x: scrollCenter.x, y: scrollCenter.y, deltaX: 0, deltaY: scrollDelta }
       };
     }
@@ -1699,6 +1698,11 @@ window.__ModuleLoader__.load({
       const execute = async (command, lifetime) => {
         let payload
         try {
+          if (lifetime.aborted || Date.now() >= command.expiresAt) return
+          const permission = await ctx.connection.rpc.call(
+            CHANNEL, 'start', { callId: command.callId, clientId: CLIENT_ID }, lifetime,
+          )
+          if (lifetime.aborted || permission?.ok !== true || permission.value?.accepted !== true) return
           payload = { callId: command.callId, clientId: CLIENT_ID, ok: true, value: await dispatch(command, ctx) }
         } catch (error) {
           payload = {

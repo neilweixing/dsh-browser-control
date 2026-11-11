@@ -1,20 +1,18 @@
 // Smoke-test the in-page agent against a jsdom document.
 // jsdom has no layout engine, so geometry is stubbed; everything else — roles,
 // accessible names, locators, actions, reading, waiting — is the real code.
-import { createRequire } from 'node:module'
+import { JSDOM } from 'jsdom'
 import fs from 'node:fs'
 
-const require = createRequire(import.meta.url)
-const { JSDOM } = require('/tmp/domtest/node_modules/jsdom')
-
-const source = fs.readFileSync('/Users/nieweixing/Code/dsh-browser-control/client.js', 'utf8')
+const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 const start = source.indexOf('const AGENT = `')
 const end = source.indexOf('/** Wrap one page-side expression')
 if (start < 0 || end < 0) throw new Error('cannot locate the AGENT template')
 const raw = source.slice(start + 'const AGENT = `'.length, source.lastIndexOf('`', end))
 // The template interpolates the agent version once; splicing it back in keeps
 // the extracted script identical to what the guest actually receives.
-const agent = raw.replace('${JSON.stringify(AGENT_VERSION)}', JSON.stringify('dshbc/3'))
+const version = source.match(/const AGENT_VERSION = '([^']+)'/)[1]
+const agent = raw.replace('${JSON.stringify(AGENT_VERSION)}', JSON.stringify(version))
 
 const results = []
 function check(name, condition, detail) {
@@ -57,6 +55,7 @@ async function main() {
   window.Element.prototype.getClientRects = () => [{ ...rect, toJSON: () => rect }]
   window.Element.prototype.scrollIntoView = function () {}
   window.HTMLElement.prototype.scrollBy = function () { this.scrollTop += 10 }
+  window.scrollBy = (_x, y) => { document.documentElement.scrollTop += y }
   window.document.elementFromPoint = () => null
 
   window.eval(agent)
@@ -87,7 +86,7 @@ async function main() {
   check('snapshot marks disabled', /"Sold out" \[disabled\]/.test(text), text)
   check('snapshot marks unchecked', /"In stock only" \[unchecked\]/.test(text), text)
   check('snapshot marks collapsed', /"More" \[collapsed\]/.test(text), text)
-  check('snapshot carries refs', /\[ref=e\d+\]/.test(text), text)
+  check('snapshot carries refs', /\[ref=e[\da-f-]+\]/.test(text), text)
   check('snapshot lists select options', /options=\*"red"\|"green"/.test(text), text)
 
   // ---- locators -------------------------------------------------------
@@ -177,11 +176,32 @@ async function main() {
 
   document.querySelector('[data-testid="apply"]').remove()
   const deadRef = agentHandle.locate({ ref })
-  check('a removed element is reported as detached', deadRef.ok === false && deadRef.reason === 'detached', deadRef)
+  check('a removed element ref is rejected', deadRef.ok === false && ['detached', 'stale-ref'].includes(deadRef.reason), deadRef)
 
   const staleRef = agentHandle.locate({ ref: 'e99999' })
   check('an unknown ref is reported as stale', staleRef.ok === false && staleRef.reason === 'stale-ref', staleRef)
 
+  const beforeMutation = agentHandle.locate({ css: '#q' }).matches[0].ref
+  document.getElementById('q').setAttribute('aria-label', 'Changed field')
+  check('a DOM change invalidates old refs synchronously', agentHandle.locate({ ref: beforeMutation }).reason === 'stale-ref', null)
+  const freshRef = agentHandle.locate({ css: '#q' }).matches[0].ref
+  check('new observations do not reuse invalidated refs', freshRef !== beforeMutation, freshRef)
+  await Promise.resolve()
+  check('fresh ref survives delivery of drained mutation records', agentHandle.locate({ ref: freshRef }).ok === true, freshRef)
+
+  const otherPage = new JSDOM('<button>Delete everything</button>', { runScripts: 'dangerously' })
+  otherPage.window.Element.prototype.getBoundingClientRect = () => rect
+  otherPage.window.Element.prototype.getClientRects = () => [rect]
+  otherPage.window.eval(agent)
+  otherPage.window.__dshbc.refSeq = agentHandle.refSeq - 1
+  otherPage.window.__dshbc.snapshot({})
+  check('another document rejects old refs', otherPage.window.__dshbc.locate({ ref: freshRef }).reason === 'stale-ref', freshRef)
+  otherPage.window.close()
+
+  for (let i = 0; i < 6000; i++) agentHandle.refs.set('budget-' + i, document.body)
+  const afterBudget = agentHandle.locate({ css: 'body' }).matches[0].ref
+  check('ref budget eviction rejects old handles', agentHandle.locate({ ref: freshRef }).reason === 'stale-ref', null)
+  check('ref budget eviction never resets sequence', afterBudget !== freshRef, afterBudget)
   // ---- reading --------------------------------------------------------
   const readPage = agentHandle.read(null, 4000)
   check('read returns page text', readPage.ok === true && readPage.text.includes('Products'), readPage.text)

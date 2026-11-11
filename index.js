@@ -50,7 +50,7 @@ const CLIENT_TTL_MS = 25000
 function createBroker() {
   let nextCallId = 1
   let disposed = false
-  /** callId → { resolve, reject, timer } */
+  /** callId → { resolve, reject, cleanup, expiresAt, started, clientId } */
   const pending = new Map()
   /** Commands no poller has taken yet. */
   const queue = []
@@ -82,6 +82,8 @@ function createBroker() {
   function deliver(entry) {
     for (const [clientId, waiter] of waiters) {
       if (!waiter.sessions.has(entry.sessionId)) continue
+      const slot = pending.get(entry.callId)
+      if (slot !== undefined) slot.clientId = clientId
       waiters.delete(clientId)
       waiter.finish({ command: entry.command })
       return true
@@ -129,7 +131,11 @@ function createBroker() {
       signal.addEventListener('abort', onAbort, { once: true })
 
       const queued = takeQueued(sessions)
-      if (queued !== undefined) finish({ command: queued.command })
+      if (queued !== undefined) {
+        const slot = pending.get(queued.callId)
+        if (slot !== undefined) slot.clientId = clientId
+        finish({ command: queued.command })
+      }
     })
   }
 
@@ -143,13 +149,22 @@ function createBroker() {
       return await holdPoll(clientId, servedSessions(input.sessions), signal)
     }
 
+    if (endpoint === 'start') {
+      const slot = pending.get(input.callId)
+      if (slot === undefined || slot.clientId !== clientId || slot.started || Date.now() >= slot.expiresAt) {
+        return ok({ accepted: false })
+      }
+      slot.started = true
+      return ok({ accepted: true })
+    }
+
     if (endpoint === 'result') {
       touch(clientId)
       const callId = typeof input.callId === 'string' ? input.callId : ''
       const slot = pending.get(callId)
-      if (slot === undefined) return ok({ accepted: false })
+      if (slot === undefined || slot.clientId !== clientId || !slot.started) return ok({ accepted: false })
       pending.delete(callId)
-      clearTimeout(slot.timer)
+      slot.cleanup()
       if (input.ok === true) slot.resolve(input.value)
       else {
         const message = typeof input.error?.message === 'string' ? input.error.message : '浏览器操作失败'
@@ -177,36 +192,36 @@ function createBroker() {
     }
     const callId = `call-${String(nextCallId++)}`
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        pending.delete(callId)
-        reject(new Error(`浏览器操作超时（${String(COMMAND_TIMEOUT_MS)}ms）：客户端未回应 ${String(command.op)}`))
-      }, COMMAND_TIMEOUT_MS)
-      if (signal !== undefined) {
-        if (signal.aborted) {
-          clearTimeout(timer)
-          reject(new Error('浏览器操作已取消'))
-          return
-        }
-        signal.addEventListener(
-          'abort',
-          () => {
-            if (!pending.has(callId)) return
-            pending.delete(callId)
-            clearTimeout(timer)
-            reject(new Error('浏览器操作已取消'))
-          },
-          { once: true },
-        )
+      const expiresAt = Date.now() + COMMAND_TIMEOUT_MS
+      const cleanup = () => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+        const index = queue.findIndex((entry) => entry.callId === callId)
+        if (index >= 0) queue.splice(index, 1)
       }
-      pending.set(callId, { resolve, reject, timer })
-      enqueue({ callId, sessionId, command: { ...command, callId } })
+      const finish = (message) => {
+        if (!pending.delete(callId)) return
+        cleanup()
+        reject(new Error(message))
+      }
+      const onAbort = () => finish('浏览器操作已取消；已开始执行的操作无法撤回')
+      const timer = setTimeout(() => {
+        finish(`浏览器操作超时（${String(COMMAND_TIMEOUT_MS)}ms）：客户端未回应 ${String(command.op)}`)
+      }, COMMAND_TIMEOUT_MS)
+      pending.set(callId, { resolve, reject, timer, cleanup, expiresAt, started: false })
+      if (signal?.aborted) {
+        onAbort()
+        return
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      enqueue({ callId, sessionId, command: { ...command, callId, expiresAt } })
     })
   }
 
   function dispose() {
     disposed = true
     for (const [callId, slot] of pending) {
-      clearTimeout(slot.timer)
+      slot.cleanup()
       slot.reject(new Error('浏览器控制插件已卸载'))
       pending.delete(callId)
     }
@@ -833,6 +848,7 @@ function registerTools(ctx, broker) {
           nth: optionalInteger(args.target?.nth, 0, 999),
           includeHidden: args.target?.include_hidden === true,
           value: args.value,
+          ...(kind === 'press' ? { key: args.value } : {}),
           delta: optionalInteger(args.delta, -100000, 100000),
           delayMs: optionalInteger(args.delay_ms, 0, 200) ?? 0,
         },
@@ -974,7 +990,7 @@ function registerScreenshotTool(scope, broker) {
       if (bytes.length === 0) throw new Error('截图失败：截图为空')
       let ref
       try {
-        ref = await attachments.saveImage({ data: bytes, mediaType: 'image/png', name: `browser-${result.tabId}.png` })
+        ref = await attachments.saveImage({ data: bytes, mediaType: 'image/png', name: `browser-${result.tab_id}.png` })
       } catch (error) {
         throw new Error(`截图保存失败：${error instanceof Error ? error.message : String(error)}`)
       }
@@ -985,7 +1001,7 @@ function registerScreenshotTool(scope, broker) {
       // verification with "Stored attachment metadata does not match its
       // reference."
       return {
-        tab_id: String(result.tabId),
+        tab_id: String(result.tab_id),
         url: String(result.url),
         title: String(result.title),
         loading: result.loading === true,
