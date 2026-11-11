@@ -403,6 +403,9 @@ const ACTION_OUTPUT_SCHEMA = objectSchema(
     ...IDENTITY_PROPERTIES,
     action: { type: 'string', description: 'The action that ran.' },
     outcome: { type: 'string', description: 'What the page did, in one line.' },
+    // Present only when the action addressed an element: a bare `press` targets
+    // the focused element and a bare `scroll` targets the document, and the
+    // output schema dialect has no nullable type to describe that absence.
     target: NODE_SCHEMA,
     locator: { type: 'string' },
     count: { type: 'integer', description: 'How many elements the locator matched before narrowing.' },

@@ -1423,9 +1423,11 @@ window.__ModuleLoader__.load({
         ...describeTab(tabId, guest),
         action: request.kind,
         outcome: outcome.outcome,
-        target: outcome.node,
-        locator: outcome.locator,
-        count: outcome.count,
+        // Omitted, not null, when the action addressed the document or the
+        // focused element: the tool output schema has no nullable type.
+        ...(outcome.node === null || outcome.node === undefined ? {} : { target: outcome.node }),
+        ...(outcome.locator === undefined ? {} : { locator: outcome.locator }),
+        ...(outcome.count === undefined ? {} : { count: outcome.count }),
         ...(verified === undefined ? {} : { verified }),
       }
     }

@@ -148,3 +148,43 @@ test('Host and Client agree on press, screenshot identity, and a single wheel sc
   assert.equal(events.filter((event) => event.type === 'mouseWheel').length, 1)
   assert.equal(events.at(-1).deltaY, 300)
 })
+
+test('a bare document scroll and press validate against the declared output', async (t) => {
+  const h = host(t)
+  const shell = new JSDOM('<div data-sidebar-right-tab="tab-real"><webview data-sidebar-browser-frame="webview"></webview></div>', { runScripts: 'dangerously', url: 'https://harness.example' })
+  const page = new JSDOM('<p>doc</p>', { runScripts: 'dangerously', url: 'https://example.com' })
+  t.after(() => { shell.window.close(); page.window.close() })
+  const w = page.window
+  w.Element.prototype.getClientRects = () => [{}]
+  w.Element.prototype.getBoundingClientRect = () => ({ left: 10, top: 10, width: 100, height: 30 })
+  w.Element.prototype.scrollIntoView = () => {}
+  w.scrollBy = () => {}
+  w.document.elementFromPoint = () => null
+  const guest = shell.window.document.querySelector('webview')
+  Object.assign(guest, {
+    getURL: () => 'https://example.com', getTitle: () => 'Example', isLoading: () => false,
+    executeJavaScript: async (code) => w.eval(code),
+    sendInputEvent: () => {},
+  })
+  let client
+  shell.window.CSS = { escape: (value) => value }
+  shell.window.__ModuleLoader__ = { load({ factory }) { client = factory() } }
+  shell.window.eval(readFileSync(new URL('../client.js', import.meta.url), 'utf8'))
+  client.apply({
+    effect(effect) { t.after(effect()) },
+    sidebarRight: {
+      openTabs: { getSnapshot: () => [{ kind: 'browser', sessionId: 'session', tabId: 'tab-real' }] },
+      mounted: { getSnapshot: () => 'session' }, isExpanded: () => true,
+    },
+    connection: { rpc: { call: (_channel, endpoint, payload, signal) => h.rpc(endpoint, payload, signal) } },
+  })
+  // Both of these address no element, so the result must still satisfy a
+  // schema whose `target` is described as an object. Leaving `target` out is
+  // the only shape the output dialect accepts: it has no nullable type.
+  const scroll = await h.invoke('browser_act', { kind: 'scroll', delta: 200 })
+  assert.equal(scroll.target, undefined)
+  assert.match(scroll.outcome, /scrolled document/)
+  const press = await h.invoke('browser_act', { kind: 'press', value: 'Tab' })
+  assert.equal(press.target, undefined)
+  assert.match(press.outcome, /sent Tab/)
+})
