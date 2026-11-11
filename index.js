@@ -452,11 +452,16 @@ const SCREENSHOT_OUTPUT_SCHEMA = objectSchema(
     ...IDENTITY_PROPERTIES,
     width: { type: 'integer', description: 'Captured width in pixels.' },
     height: { type: 'integer', description: 'Captured height in pixels.' },
-    bytes: { type: 'integer', description: 'PNG byte size.' },
+    bytes: { type: 'integer', description: 'Stored image byte size.' },
     image: objectSchema(
       {
         attachmentId: { type: 'string' },
-        mediaType: { type: 'string', enum: ['image/png'] },
+        mediaType: {
+          type: 'string',
+          enum: ['image/png', 'image/jpeg', 'image/webp'],
+          description:
+            'Format of the stored object, which the attachment store may normalize to JPEG or WebP; always read it from the reference rather than assuming the captured format.',
+        },
         bytes: { type: 'integer' },
         width: { type: 'integer' },
         height: { type: 'integer' },
@@ -973,6 +978,12 @@ function registerScreenshotTool(scope, broker) {
       } catch (error) {
         throw new Error(`截图保存失败：${error instanceof Error ? error.message : String(error)}`)
       }
+      // The attachment store normalizes the stored object — an opaque
+      // screenshot is re-encoded to JPEG — so the reference it returns is the
+      // only truthful source of the stored format and dimensions. Reporting the
+      // submitted PNG here would make every later read fail integrity
+      // verification with "Stored attachment metadata does not match its
+      // reference."
       return {
         tab_id: String(result.tabId),
         url: String(result.url),
@@ -983,7 +994,7 @@ function registerScreenshotTool(scope, broker) {
         bytes: Number(ref.bytes),
         image: {
           attachmentId: String(ref.attachmentId),
-          mediaType: 'image/png',
+          mediaType: String(ref.mediaType),
           bytes: Number(ref.bytes),
           width: Number(ref.width),
           height: Number(ref.height),

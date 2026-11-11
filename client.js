@@ -53,7 +53,7 @@ window.__ModuleLoader__.load({
     const GUEST_BUDGET_MS = 25000
 
     /** Version marker of the in-page agent; a bump reinstalls it after a hot update. */
-    const AGENT_VERSION = 'dshbc/7'
+    const AGENT_VERSION = 'dshbc/8'
 
     /** Sleep for a bounded delay. */
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
